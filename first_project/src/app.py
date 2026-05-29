@@ -235,6 +235,50 @@ def s3_delete():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# ── Feature 4: CPU Stress Test ───────────────────────────────────────────────
+
+@app.route('/feature4')
+def feature4():
+    return render_template('feature4.html')
+
+
+_stress_status = {'running': False, 'end_time': 0}
+_stress_procs = []
+
+def _burn(deadline):
+    while time.time() < deadline:
+        _ = 99999 ** 9999
+
+def _burn_all(duration):
+    import multiprocessing
+    _stress_status['running'] = True
+    _stress_status['end_time'] = time.time() + duration
+    deadline = _stress_status['end_time']
+    cores = os.cpu_count() or 4
+    procs = [multiprocessing.Process(target=_burn, args=(deadline,)) for _ in range(cores)]
+    _stress_procs.clear()
+    _stress_procs.extend(procs)
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join()
+    _stress_status['running'] = False
+
+@app.route('/api/cpu-stress', methods=['POST'])
+def cpu_stress():
+    if _stress_status['running']:
+        return jsonify({'error': 'already running'}), 409
+    duration = min(int((request.json or {}).get('duration', 5)), 30)
+    import threading
+    threading.Thread(target=_burn_all, args=(duration,), daemon=True).start()
+    return jsonify({'started': True, 'duration': duration})
+
+@app.route('/api/cpu-stress/status', methods=['GET'])
+def cpu_stress_status():
+    remaining = max(0, round(_stress_status['end_time'] - time.time(), 1))
+    return jsonify({'running': _stress_status['running'], 'remaining': remaining})
+
+
 # Error Handler for API routes
 @app.errorhandler(400)
 def bad_request(error):

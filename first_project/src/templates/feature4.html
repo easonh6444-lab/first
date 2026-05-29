@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CPU Stress Test — Feature 4</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔥</text></svg>">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg-dark:      #050811;
+            --glass-bg:     rgba(255, 255, 255, 0.04);
+            --glass-border: rgba(255, 255, 255, 0.10);
+            --cyan:         #00f2fe;
+            --orange:       #ff9800;
+            --red:          #ff4444;
+            --green:        #00e676;
+            --text-primary: #e8eaf6;
+            --text-muted:   rgba(232,234,246,0.55);
+            --font-main:    'Inter', sans-serif;
+            --font-display: 'Outfit', sans-serif;
+            --radius-lg:    18px;
+            --radius-md:    12px;
+            --transition:   0.25s cubic-bezier(0.4,0,0.2,1);
+        }
+
+        html, body {
+            min-height: 100vh;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            font-family: var(--font-main);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2rem;
+        }
+
+        h1 {
+            font-family: var(--font-display);
+            font-size: 2.2rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--orange), var(--red));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .card {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-lg);
+            padding: 2.5rem 3rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.5rem;
+            min-width: 340px;
+        }
+
+        .desc {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            text-align: center;
+            line-height: 1.6;
+        }
+
+        label {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        .duration-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        input[type=range] {
+            accent-color: var(--orange);
+            width: 160px;
+        }
+
+        #duration-val {
+            font-weight: 600;
+            color: var(--orange);
+            min-width: 2.5rem;
+            text-align: center;
+        }
+
+        #stress-btn {
+            padding: 0.85rem 2.5rem;
+            font-size: 1.05rem;
+            font-weight: 700;
+            font-family: var(--font-display);
+            border: none;
+            border-radius: var(--radius-md);
+            background: linear-gradient(135deg, var(--orange), var(--red));
+            color: #fff;
+            cursor: pointer;
+            transition: opacity var(--transition), transform var(--transition);
+        }
+
+        #stress-btn:hover:not(:disabled) { opacity: 0.85; transform: translateY(-2px); }
+        #stress-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+        #status {
+            font-size: 0.95rem;
+            font-weight: 500;
+            min-height: 1.4rem;
+            transition: color var(--transition);
+        }
+        #status.running { color: var(--orange); }
+        #status.done    { color: var(--green); }
+        #status.error   { color: var(--red); }
+
+        .back-link {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: color var(--transition);
+        }
+        .back-link:hover { color: var(--cyan); }
+    </style>
+</head>
+<body>
+    <h1>🔥 CPU Stress Test</h1>
+
+    <div class="card">
+        <p class="desc">按下按鈕後，伺服器將對單一 CPU 核心施加滿載壓力，<br>持續時間可自行調整（最長 30 秒）。</p>
+
+        <div class="duration-row">
+            <label for="duration">持續時間</label>
+            <input type="range" id="duration" min="1" max="30" value="5"
+                   oninput="document.getElementById('duration-val').textContent=this.value+'s'">
+            <span id="duration-val">5s</span>
+        </div>
+
+        <button id="stress-btn" onclick="runStress()">🚀 開始壓測</button>
+        <span id="status"></span>
+    </div>
+
+    <a href="/" class="back-link">← 返回首頁</a>
+
+    <script>
+        async function runStress() {
+            const btn = document.getElementById('stress-btn');
+            const status = document.getElementById('status');
+            const duration = parseInt(document.getElementById('duration').value);
+
+            btn.disabled = true;
+            status.className = 'running';
+            status.textContent = `⚡ 啟動中…`;
+
+            try {
+                await fetch('/api/cpu-stress', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ duration })
+                });
+            } catch (e) {
+                status.className = 'error';
+                status.textContent = '❌ 請求失敗：' + e.message;
+                btn.disabled = false;
+                return;
+            }
+
+            // poll until done
+            const poll = setInterval(async () => {
+                const res = await fetch('/api/cpu-stress/status');
+                const data = await res.json();
+                if (data.running) {
+                    status.textContent = `🔥 CPU 壓測中… 剩餘 ${data.remaining}s`;
+                } else {
+                    clearInterval(poll);
+                    status.className = 'done';
+                    status.textContent = `✅ 完成！`;
+                    btn.disabled = false;
+                }
+            }, 500);
+        }
+    </script>
+</body>
+</html>

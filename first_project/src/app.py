@@ -1,6 +1,28 @@
 from flask import Flask, jsonify, render_template, request, abort
 import time
 import random
+import os
+
+# ── AWS S3 configuration (read from environment variables — never hardcode) ──
+# Set these in your shell / .env / Docker environment:
+#   AWS_ACCESS_KEY_ID     = your access key
+#   AWS_SECRET_ACCESS_KEY = your secret key
+#   AWS_REGION            = ap-northeast-1  (default below)
+#   S3_BUCKET_NAME        = ckc101-13       (default below)
+S3_BUCKET  = os.environ.get('S3_BUCKET_NAME', 'ckc101-13')
+S3_REGION  = os.environ.get('AWS_REGION',     'ap-northeast-1')
+
+def _s3_client():
+    """Lazily create boto3 S3 client; raises RuntimeError if boto3 is absent."""
+    try:
+        import boto3
+        return boto3.client(
+            's3',
+            region_name=S3_REGION,
+            # boto3 auto-reads AWS_ACCESS_KEY_ID & AWS_SECRET_ACCESS_KEY from env
+        )
+    except ImportError:
+        raise RuntimeError('boto3 is not installed. Run: pip install boto3')
 
 app = Flask(__name__)
 
@@ -132,6 +154,86 @@ def feature1():
 def feature2():
     """Feature 2: 提醒要找下午上班的公司。"""
     return '要找下午上班的公司'
+
+# ── Feature 3: S3 File Upload / Download ─────────────────────────────────────
+
+@app.route('/feature3')
+def feature3():
+    """Feature 3: AWS S3 檔案上傳 / 下載管理介面。"""
+    return render_template('feature3.html')
+
+
+@app.route('/api/s3/list', methods=['GET'])
+def s3_list():
+    """列出 S3 Bucket 內的所有物件（最多 1000 筆）。"""
+    try:
+        s3 = _s3_client()
+        resp = s3.list_objects_v2(Bucket=S3_BUCKET)
+        files = [
+            {
+                'key':           obj['Key'],
+                'size':          obj['Size'],
+                'last_modified': obj['LastModified'].isoformat(),
+            }
+            for obj in resp.get('Contents', [])
+        ]
+        return jsonify({'bucket': S3_BUCKET, 'files': files})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/s3/upload', methods=['POST'])
+def s3_upload():
+    """上傳檔案到 S3 Bucket。"""
+    if 'file' not in request.files:
+        abort(400, description="No file part in the request.")
+    file = request.files['file']
+    if file.filename == '':
+        abort(400, description="No file selected.")
+    try:
+        s3 = _s3_client()
+        s3.upload_fileobj(
+            file,
+            S3_BUCKET,
+            file.filename,
+            ExtraArgs={'ContentType': file.content_type or 'application/octet-stream'},
+        )
+        return jsonify({'success': True, 'key': file.filename, 'bucket': S3_BUCKET}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/s3/download-url', methods=['GET'])
+def s3_download_url():
+    """產生 S3 物件的 Presigned URL（15 分鐘有效）。"""
+    key = request.args.get('key', '').strip()
+    if not key:
+        abort(400, description="Missing 'key' query parameter.")
+    try:
+        s3 = _s3_client()
+        url = s3.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': S3_BUCKET, 'Key': key},
+            ExpiresIn=900,   # 15 minutes
+        )
+        return jsonify({'url': url, 'key': key, 'expires_in': 900})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/s3/delete', methods=['DELETE'])
+def s3_delete():
+    """刪除 S3 Bucket 內的物件。"""
+    data = request.get_json(silent=True) or {}
+    key = data.get('key', '').strip()
+    if not key:
+        abort(400, description="Missing 'key' in request body.")
+    try:
+        s3 = _s3_client()
+        s3.delete_object(Bucket=S3_BUCKET, Key=key)
+        return jsonify({'success': True, 'key': key})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # Error Handler for API routes
 @app.errorhandler(400)

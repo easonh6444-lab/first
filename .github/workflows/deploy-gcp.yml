@@ -1,0 +1,84 @@
+name: Deploy to GCP (GCE + Cloud Run)
+
+on:
+  workflow_run:
+    workflows: ["Deploy to ECS"]
+    types: [completed]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_IMAGE: 802479323365.dkr.ecr.ap-northeast-1.amazonaws.com/myfirstweb:latest
+  GCP_PROJECT: ckc101-13
+  GCP_REGION: asia-east1
+  GAR_REPO: asia-east1-docker.pkg.dev/ckc101-13/myfirstweb
+  CLOUD_RUN_SERVICE: myfirstweb
+  GCE_INSTANCE: myfirstweb-vm
+  GCE_ZONE: asia-east1-b
+
+jobs:
+  deploy-gcp:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::802479323365:role/github-action
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Pull image from ECR
+        run: docker pull ${{ env.ECR_IMAGE }}
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker asia-east1-docker.pkg.dev --quiet
+
+      - name: Tag and push to Artifact Registry
+        run: |
+          docker tag ${{ env.ECR_IMAGE }} ${{ env.GAR_REPO }}:latest
+          docker push ${{ env.GAR_REPO }}:latest
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.CLOUD_RUN_SERVICE }} \
+            --image ${{ env.GAR_REPO }}:latest \
+            --region ${{ env.GCP_REGION }} \
+            --port 19191 \
+            --allow-unauthenticated
+
+      - name: Deploy to GCE
+        run: |
+          gcloud compute ssh ${{ env.GCE_INSTANCE }} \
+            --zone ${{ env.GCE_ZONE }} \
+            --command "docker pull ${{ env.GAR_REPO }}:latest && docker stop myfirstweb 2>/dev/null; docker rm myfirstweb 2>/dev/null; docker run -d --name myfirstweb -p 19191:19191 ${{ env.GAR_REPO }}:latest"
+
+      - name: Notify Discord
+        if: success()
+        run: |
+          curl -H "Content-Type: application/json" \
+            -d "{\"content\":\"✅ GCP deploy succeeded! Cloud Run + GCE updated. Commit: \`${{ github.sha }}\`\"}" \
+            ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      - name: Notify Discord on failure
+        if: failure()
+        run: |
+          curl -H "Content-Type: application/json" \
+            -d "{\"content\":\"❌ GCP deploy failed! Check: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            ${{ secrets.DISCORD_WEBHOOK_URL }}

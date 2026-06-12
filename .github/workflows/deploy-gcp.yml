@@ -14,7 +14,7 @@ env:
   ECR_IMAGE: 802479323365.dkr.ecr.ap-northeast-1.amazonaws.com/myfirstweb:latest
   GCP_PROJECT: ckc101-13
   GCP_REGION: asia-east1
-  GAR_REPO: asia-east1-docker.pkg.dev/ckc101-13/myfirstweb
+  GAR_REPO: asia-east1-docker.pkg.dev/ckc101-13/myfirstweb/myfirstweb
   CLOUD_RUN_SERVICE: myfirstweb
   GCE_INSTANCE: myfirstweb-vm
   GCE_ZONE: asia-east1-b
